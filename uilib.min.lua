@@ -5061,17 +5061,16 @@ function InsUi:CreateBox(options)
 end
 
 
-local function BoxLine(box, kind, value, color)
-  local Line = { Kind = kind, Value = value, Color = color }
-
+local function BoxLine(box, kind, value, color, alpha)
+  local Line = { Kind = kind, Value = value, Color = color, Alpha = alpha }
+  
   table.insert(box.Lines, Line)
-
   return Line
 end
 
 
-function BoxClass:Text(value, color)
-  return BoxLine(self, "Text", value, color)
+function BoxClass:Text(value, color, alpha)
+  return BoxLine(self, "Text", value, color, alpha)
 end
 
 
@@ -5487,7 +5486,7 @@ do
 
 
   local function BuildText(line, lines)
-    lines[#lines + 1] = { Kind = "Text", Text = tostring(line.Value), Color = line.Color }
+    lines[#lines + 1] = { Kind = "Text", Text = tostring(line.Value), Color = line.Color, Alpha = line.Alpha }
   end
 
 
@@ -5560,7 +5559,7 @@ do
   local function DrawTextLine(line, x, y, width)
     local TextColor = line.Color or Theme.Text
 
-    DrawText(line.Text, x + Layout.BoxInset, y, TextColor, Layout.SmallSize, SystemFont, 162, Alpha.Label, width - Layout.BoxTextRoom)
+    DrawText(line.Text, x + Layout.BoxInset, y, TextColor, Layout.SmallSize, SystemFont, 162, line.Alpha or Alpha.Label, width - Layout.BoxTextRoom)
   end
 
 
