@@ -1245,12 +1245,14 @@ do
     local Image = holder and holder.Image
     if not Image then return false end
 
+    local Shade = transparency * FrameFade
+
     Image.Position = Vector2.new(x, y)
     Image.Size = Vector2.new(width, height)
     Image.Rounding = corner or 0
     Image.ZIndex = z
-    Image.Transparency = transparency
-    Image.Visible = transparency > 0.01
+    Image.Transparency = Shade
+    Image.Visible = Shade > 0.01
 
     return true
   end
@@ -1796,7 +1798,7 @@ do
       local Wide = State.BackdropWide and State.BackdropWide * State.W or PaneHeight * 0.6
       local Tall = State.BackdropWide and (State.BackdropTall or 1) * PaneHeight or PaneHeight
 
-      DrawPicture(Backdrop, State.X + (State.W - Wide) / 2, State.Y + Layout.TopbarHeight + (PaneHeight - Tall) / 2, Wide, Tall, 119999, State.BackdropAlpha * State.Visible)
+      DrawPicture(Backdrop, State.X + (State.W - Wide) / 2, State.Y + Layout.TopbarHeight + (PaneHeight - Tall) / 2, Wide, Tall, 119999, State.BackdropAlpha)
     end
 
     DrawStroke(State.X, State.Y, State.W, State.H, Theme.Text, 12, Layout.Corner, Alpha.Hairline)
@@ -6876,6 +6878,13 @@ end
 
 
 local function DrawMenu()
+  -- A hidden (or still fading-out) window must never eat game clicks: drop new
+  -- presses and release any drag in progress while closed or mostly faded.
+  if not State.Open or State.Visible < 0.5 then
+    ReleaseDrags()
+    Input.Click, Input.Right = false, false
+  end
+
   local View = ActiveView()
 
   if View ~= State.SeenView then
