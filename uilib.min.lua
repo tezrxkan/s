@@ -1463,14 +1463,96 @@ local function ReleaseDrags()
 end
 
 
-local function ReadKeys()
-  for Index = 1, #KeyOrder do
-    local Key = Keys[KeyOrder[Index]]
-    local Held = iskeypressed(Key.Code)
+-- Tiered key polling. A full ~80-key iskeypressed scan every frame is the most
+-- expensive host traffic in the idle loop, but a closed menu only consumes a
+-- handful of keys (menu key, spotlight combo, dialog escape, bound keybinds).
+-- While anything needs the full set (open menu, text focus, rebind capture,
+-- spotlight, dialog) the scan runs as before; otherwise only the hot set is
+-- polled. The hot set is rebuilt from the live binds on every open frame, so
+-- it is always fresh when the menu closes, plus a periodic refresh while
+-- closed for tabs registered at runtime.
+local PollFixed = { "Ctrl", "LeftCtrl", "RightCtrl", "Space", "Escape" }
+local PollHot, PollHotAt, PollWasFull = {}, -120, true
 
+local function RebuildPollHot()
+  PollHotAt = State.Frame
+
+  for Name in pairs(PollHot) do PollHot[Name] = nil end
+
+  local function Note(value)
+    if value == nil or value == "" or value == "none" then return end
+
+    local Lowered = string.lower(value)
+    local ModName, KeyName = string.match(Lowered, "^(%w+)%+(.+)$")
+
+    if ModName then
+      if Keys[ModName] then PollHot[ModName] = true end
+      if KeyName and Keys[KeyName] then PollHot[KeyName] = true end
+    elseif Keys[Lowered] then
+      PollHot[Lowered] = true
+    end
+  end
+
+  -- Mirrors the rows RunKeybinds consumes, so the polled set is exactly the
+  -- set whose Held / Click it reads.
+  for _, Tab in ipairs(State.Tabs) do
+    for _, Section in ipairs(Tab.Sections) do
+      for _, Row in ipairs(Section.Rows) do
+        local Bind = Row.Bind
+
+        if Bind and not Bind.Listening then Note(Bind.Value) end
+      end
+    end
+  end
+end
+
+local function IsHotKey(Name)
+  if PollHot[Name] or Name == State.MenuKey then return true end
+
+  for Index = 1, #PollFixed do
+    if PollFixed[Index] == Name then return true end
+  end
+
+  return false
+end
+
+local function PollOne(Name, Seed)
+  local Key = Keys[Name]
+  if not Key then return end
+  local Held = iskeypressed(Key.Code)
+
+  if Seed then
+    Key.Click, Key.Held = false, Held
+  else
     Key.Click = Held and not Key.Held
     Key.Held = Held
   end
+end
+
+local function ReadKeys()
+  if State.Open or State.Focus or State.Capture or State.SpotlightOpen or State.Dialog then
+    -- Resuming the full scan after hot polling: keys outside the hot set carry
+    -- stale Held, so seed them without fabricating Click edges.
+    local Seed = not PollWasFull
+
+    for Index = 1, #KeyOrder do
+      local Name = KeyOrder[Index]
+
+      PollOne(Name, Seed and not IsHotKey(Name))
+    end
+
+    RebuildPollHot()
+    PollWasFull = true
+
+    return
+  end
+
+  if State.Frame - PollHotAt >= 120 then RebuildPollHot() end
+  for Index = 1, #PollFixed do PollOne(PollFixed[Index]) end
+  PollOne(State.MenuKey)
+
+  for Name in pairs(PollHot) do PollOne(Name) end
+  PollWasFull = false
 end
 
 
