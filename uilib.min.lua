@@ -1471,69 +1471,77 @@ end
 -- polled. The hot set is rebuilt from the live binds on every open frame, so
 -- it is always fresh when the menu closes, plus a periodic refresh while
 -- closed for tabs registered at runtime.
-local PollFixed = { "Ctrl", "LeftCtrl", "RightCtrl", "Space", "Escape" }
-local PollHot, PollHotAt, PollWasFull = {}, -120, true
+--
+-- The poll state lives on State via plain assignments and the helpers are
+-- nested inside ReadKeys: this chunk sits at Luau's 200-register ceiling, so
+-- this optimization must not add chunk-level locals of its own.
+State.PollFixed = { "Ctrl", "LeftCtrl", "RightCtrl", "Space", "Escape" }
+State.PollHot = {}
+State.PollHotAt = -120
+State.PollWasFull = true
 
-local function RebuildPollHot()
-  PollHotAt = State.Frame
+local function ReadKeys()
+  local function PollOne(Name, Seed)
+    local Key = Keys[Name]
+    if not Key then return end
+    local Held = iskeypressed(Key.Code)
 
-  for Name in pairs(PollHot) do PollHot[Name] = nil end
-
-  local function Note(value)
-    if value == nil or value == "" or value == "none" then return end
-
-    local Lowered = string.lower(value)
-    local ModName, KeyName = string.match(Lowered, "^(%w+)%+(.+)$")
-
-    if ModName then
-      if Keys[ModName] then PollHot[ModName] = true end
-      if KeyName and Keys[KeyName] then PollHot[KeyName] = true end
-    elseif Keys[Lowered] then
-      PollHot[Lowered] = true
+    if Seed then
+      Key.Click, Key.Held = false, Held
+    else
+      Key.Click = Held and not Key.Held
+      Key.Held = Held
     end
   end
 
-  -- Mirrors the rows RunKeybinds consumes, so the polled set is exactly the
-  -- set whose Held / Click it reads.
-  for _, Tab in ipairs(State.Tabs) do
-    for _, Section in ipairs(Tab.Sections) do
-      for _, Row in ipairs(Section.Rows) do
-        local Bind = Row.Bind
+  local function RebuildPollHot()
+    State.PollHotAt = State.Frame
 
-        if Bind and not Bind.Listening then Note(Bind.Value) end
+    local Hot = State.PollHot
+    for Name in pairs(Hot) do Hot[Name] = nil end
+
+    local function Note(value)
+      if value == nil or value == "" or value == "none" then return end
+
+      local Lowered = string.lower(value)
+      local ModName, KeyName = string.match(Lowered, "^(%w+)%+(.+)$")
+
+      if ModName then
+        if Keys[ModName] then Hot[ModName] = true end
+        if KeyName and Keys[KeyName] then Hot[KeyName] = true end
+      elseif Keys[Lowered] then
+        Hot[Lowered] = true
+      end
+    end
+
+    -- Mirrors the rows RunKeybinds consumes, so the polled set is exactly the
+    -- set whose Held / Click it reads.
+    for _, Tab in ipairs(State.Tabs) do
+      for _, Section in ipairs(Tab.Sections) do
+        for _, Row in ipairs(Section.Rows) do
+          local Bind = Row.Bind
+
+          if Bind and not Bind.Listening then Note(Bind.Value) end
+        end
       end
     end
   end
-end
 
-local function IsHotKey(Name)
-  if PollHot[Name] or Name == State.MenuKey then return true end
+  local function IsHotKey(Name)
+    if State.PollHot[Name] or Name == State.MenuKey then return true end
 
-  for Index = 1, #PollFixed do
-    if PollFixed[Index] == Name then return true end
+    local Fixed = State.PollFixed
+    for Index = 1, #Fixed do
+      if Fixed[Index] == Name then return true end
+    end
+
+    return false
   end
 
-  return false
-end
-
-local function PollOne(Name, Seed)
-  local Key = Keys[Name]
-  if not Key then return end
-  local Held = iskeypressed(Key.Code)
-
-  if Seed then
-    Key.Click, Key.Held = false, Held
-  else
-    Key.Click = Held and not Key.Held
-    Key.Held = Held
-  end
-end
-
-local function ReadKeys()
   if State.Open or State.Focus or State.Capture or State.SpotlightOpen or State.Dialog then
     -- Resuming the full scan after hot polling: keys outside the hot set carry
     -- stale Held, so seed them without fabricating Click edges.
-    local Seed = not PollWasFull
+    local Seed = not State.PollWasFull
 
     for Index = 1, #KeyOrder do
       local Name = KeyOrder[Index]
@@ -1542,17 +1550,18 @@ local function ReadKeys()
     end
 
     RebuildPollHot()
-    PollWasFull = true
+    State.PollWasFull = true
 
     return
   end
 
-  if State.Frame - PollHotAt >= 120 then RebuildPollHot() end
-  for Index = 1, #PollFixed do PollOne(PollFixed[Index]) end
+  if State.Frame - State.PollHotAt >= 120 then RebuildPollHot() end
+  local Fixed = State.PollFixed
+  for Index = 1, #Fixed do PollOne(Fixed[Index]) end
   PollOne(State.MenuKey)
 
-  for Name in pairs(PollHot) do PollOne(Name) end
-  PollWasFull = false
+  for Name in pairs(State.PollHot) do PollOne(Name) end
+  State.PollWasFull = false
 end
 
 
