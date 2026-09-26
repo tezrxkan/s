@@ -1444,6 +1444,17 @@ AddKey("RightShift", 0xA1)
   AddKey("Comma", 0xBC, ",", "<")
   AddKey("Period", 0xBE, ".", ">")
   AddKey("Slash", 0xBF, "/", "?")
+
+  -- Stored key names are lowercase ("rightshift", "space"), but the Keys table is
+  -- canonical ("RightShift", "Space"). Resolve bridges them, so special keys can be
+  -- bound *and* actually fire. Block-local: no chunk registers spent.
+  local ByLower = {}
+  for Index = 1, #KeyOrder do ByLower[string.lower(KeyOrder[Index])] = KeyOrder[Index] end
+  function Keys.Resolve(name)
+    if type(name) ~= "string" or name == "" then return nil end
+    if Keys[name] then return name end
+    return ByLower[string.lower(name)]
+  end
 end
 
 
@@ -1507,10 +1518,15 @@ local function ReadKeys()
       local ModName, KeyName = string.match(Lowered, "^(%w+)%+(.+)$")
 
       if ModName then
-        if Keys[ModName] then Hot[ModName] = true end
-        if KeyName and Keys[KeyName] then Hot[KeyName] = true end
-      elseif Keys[Lowered] then
-        Hot[Lowered] = true
+        local ModKey = Keys.Resolve(ModName)
+        if ModKey then Hot[ModKey] = true end
+        if KeyName then
+          local KeyKey = Keys.Resolve(KeyName)
+          if KeyKey then Hot[KeyKey] = true end
+        end
+      else
+        local KeyKey = Keys.Resolve(Lowered)
+        if KeyKey then Hot[KeyKey] = true end
       end
     end
 
@@ -1527,8 +1543,10 @@ local function ReadKeys()
     end
   end
 
+  local MenuKeyName = Keys.Resolve(State.MenuKey)
+
   local function IsHotKey(Name)
-    if State.PollHot[Name] or Name == State.MenuKey then return true end
+    if State.PollHot[Name] or Name == MenuKeyName then return true end
 
     local Fixed = State.PollFixed
     for Index = 1, #Fixed do
@@ -1558,7 +1576,7 @@ local function ReadKeys()
   if State.Frame - State.PollHotAt >= 120 then RebuildPollHot() end
   local Fixed = State.PollFixed
   for Index = 1, #Fixed do PollOne(Fixed[Index]) end
-  PollOne(State.MenuKey)
+  PollOne(MenuKeyName)
 
   for Name in pairs(State.PollHot) do PollOne(Name) end
   State.PollWasFull = false
@@ -4261,9 +4279,9 @@ end
 local function SplitCombo(value)
   local Mod, Key = string.match(string.lower(value), "^(%w+)%+(.+)$")
 
-  if Mod then return Keys[Mod], Keys[Key] end
+  if Mod then return Keys[Keys.Resolve(Mod)], Keys[Keys.Resolve(Key)] end
 
-  return nil, Keys[string.lower(value)]
+  return nil, Keys[Keys.Resolve(string.lower(value))]
 end
 
 
@@ -7054,7 +7072,7 @@ task.spawn(function()
       Keys.Space.Click = false
     end
 
-    local MenuKey = Keys[State.MenuKey]
+    local MenuKey = Keys[Keys.Resolve(State.MenuKey)]
 
     if MenuKey and MenuKey.Click and not State.Focus and not State.Capture then State.Open = not State.Open end
 
