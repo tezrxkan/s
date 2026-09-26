@@ -1354,7 +1354,7 @@ local State = {
   Glow = 1,
   HoverEffects = true,
   RailPinned = false,
-  DropdownInline = false,
+  DropdownInline = true,
   SearchStyle = "bar",
   NoAnim = false,
   NoteDuration = 5,
@@ -2930,8 +2930,10 @@ end
 
 
   function DrawDropdown(row, x, y, width, fade)
-    local Inline = State.DropdownInline
-    local NoLabel = not Inline and row.Compact == true
+    -- Compact wins over the global inline mode: a compact row is always a
+    -- full-width labelless box, so filters keep stacking flush under toggles.
+    local Inline = State.DropdownInline and row.Compact ~= true
+    local NoLabel = row.Compact == true
     local BoxWidth = Inline and math.max(Layout.InlineMin, math.floor(width * Layout.InlineShare)) or width
     local BoxX = Inline and (x + width - BoxWidth) or x
     local BoxY = (Inline or NoLabel) and y or (y + Layout.FieldGap)
