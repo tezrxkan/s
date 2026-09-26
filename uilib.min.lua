@@ -2931,9 +2931,10 @@ end
 
   function DrawDropdown(row, x, y, width, fade)
     local Inline = State.DropdownInline
+    local NoLabel = not Inline and row.Compact == true
     local BoxWidth = Inline and math.max(Layout.InlineMin, math.floor(width * Layout.InlineShare)) or width
     local BoxX = Inline and (x + width - BoxWidth) or x
-    local BoxY = Inline and y or (y + Layout.FieldGap)
+    local BoxY = (Inline or NoLabel) and y or (y + Layout.FieldGap)
     local LabelRoom = Inline and (BoxX - x - 8) or width
     local LabelY = TextTop(y, Inline and Layout.FieldHeight or Layout.LabelHeight, Layout.TextSize)
     local Hovered = Interact and IsMouseIn(BoxX, BoxY, BoxWidth, Layout.FieldHeight)
@@ -2947,7 +2948,7 @@ end
     local Turn = row.Arrow * row.Arrow * (3 - 2 * row.Arrow)
     local ArrowColor = Blend(Theme.Text, Theme.Accent, row.Glow)
 
-    DrawText(row.Name, x, LabelY, Theme.Text, Layout.TextSize, SystemFont, 31, Alpha.Label * fade, LabelRoom)
+    if not NoLabel then DrawText(row.Name, x, LabelY, Theme.Text, Layout.TextSize, SystemFont, 31, Alpha.Label * fade, LabelRoom) end
     DrawRect(BoxX, BoxY, BoxWidth, Layout.FieldHeight, Theme.Text, 30, Layout.CardRadius, BoxAlpha * fade)
     DrawText(Display, BoxX + Layout.FieldPad, TextTop(BoxY, Layout.FieldHeight, Layout.TextSize), Theme.Text, Layout.TextSize, SystemFont, 32, Alpha.Dim * fade, BoxWidth - Layout.DropdownTextRoom)
     DrawChevron(BoxX + BoxWidth - Layout.ArrowInset, BoxY + Layout.FieldHeight / 2, Layout.ArrowRadius, Turn, ArrowColor, 32, (Alpha.Dim + Alpha.ArrowLift * row.Glow) * fade)
@@ -3658,7 +3659,9 @@ local RowHeight = {
 
 
 local function RowSpan(row)
-  if row.Kind == "Dropdown" and State.DropdownInline then return Layout.DropdownInlineRow end
+  -- A compact dropdown (script-set row.Compact) drops its label line, so it takes
+  -- the single-box span and stacks flush under the row above.
+  if row.Kind == "Dropdown" and (State.DropdownInline or row.Compact == true) then return Layout.DropdownInlineRow end
   if row.Kind == "Label" then return math.max(18, (row.LineCount or 1) * Layout.LabelLine + 2) end
   if row.Kind == "Info" then return math.max(16, (row.LineCount or 1) * Layout.InfoLine + 2) end
 
