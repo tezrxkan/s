@@ -1344,7 +1344,7 @@ local State = {
   SpotJump = nil,
   IconAt = 0,
   ConfigName = "default",
-  MenuKey = "P",
+  MenuKey = "RightShift",
   Alive = true,
   Frame = 0,
   Folder = LibName .. "_configs",
@@ -4097,9 +4097,9 @@ do
 
 
   local function DrawNote(note, stackY)
-    local Viewport = Camera.ViewportSize
+    local Viewport = State.View or Camera.ViewportSize
     local Room = Layout.NoteWidth - Layout.NoteBodyRoom
-    local Lines = WrapText(note.Body, Room, Layout.SmallSize, SystemFont)
+    local Lines = note.Lines or WrapText(note.Body, Room, Layout.SmallSize, SystemFont)
     local Count = math.min(#Lines, Layout.NoteLines)
     local Height = Layout.NoteTopPad + Count * Layout.NoteLine + Layout.NoteBottomPad
     local TargetX = Viewport.X - Layout.NoteWidth - Layout.NoteMargin
@@ -4149,7 +4149,7 @@ do
 
   function DrawNotifications()
     local Notes = State.Notes
-    local StackY = Camera.ViewportSize.Y - Layout.NoteMargin
+    local StackY = (State.View or Camera.ViewportSize).Y - Layout.NoteMargin
     local Index = 1
 
     while #Notes > Layout.NoteMax do table.remove(Notes, 1) end
@@ -4184,7 +4184,7 @@ local function DrawTooltip()
 
   for Index = 1, #Lines do Widest = math.max(Widest, TextWidth(Lines[Index], Layout.SmallSize, UiFont)) end
 
-  local View = Camera.ViewportSize
+  local View = State.View or Camera.ViewportSize
   local Width = math.floor(Widest * Layout.TipStretch) + Layout.TipPad
   local Height = Layout.TipTopPad + Layout.TipLine * #Lines
   local BoxX = math.min(math.max(Tip.X + Layout.TipOffsetX, Layout.TipMargin), View.X - Width - Layout.TipMargin)
@@ -4207,7 +4207,7 @@ local function DrawDialog()
   local Fade = State.DialogFade
   if Fade < Layout.DialogHide then return end
 
-  local View = Camera.ViewportSize
+  local View = State.View or Camera.ViewportSize
 
   DrawRect(0, 0, View.X, View.Y, Black, 450, 0, Alpha.DialogVeil * Fade)
 
@@ -4294,7 +4294,14 @@ local function RunKeybinds()
         local Bind = Row.Bind
 
         if Bind and Bind.Value ~= "" and Bind.Value ~= "none" and not Bind.Listening and not RowLocked(Row) then
-          local Mod, Key = SplitCombo(Bind.Value)
+          -- SplitCombo parses strings, so the resolved pair is cached on the
+          -- bind: any value change (rebind, config apply) misses the cache and
+          -- re-splits exactly once instead of every frame per bind.
+          if Bind.SplitValue ~= Bind.Value then
+            Bind.SplitValue = Bind.Value
+            Bind.SplitMod, Bind.SplitKey = SplitCombo(Bind.Value)
+          end
+          local Mod, Key = Bind.SplitMod, Bind.SplitKey
           local Mode = Bind.Mode or "Hold"
           local Live = not Mod or Mod.Held
           local Active = Bind.Callback and Bind.Active or Row.Value
@@ -5058,9 +5065,14 @@ end
 
 
 function InsUi:Notify(title, description, duration, kind)
+  local Body = string.lower(tostring(description or ""))
+
   State.Notes[#State.Notes + 1] = {
     Title = string.lower(tostring(title or "notification")),
-    Body = string.lower(tostring(description or "")),
+    Body = Body,
+    -- Wrapped once here: DrawNote used to re-wrap every toast every frame, and
+    -- only position/alpha animate afterwards.
+    Lines = WrapText(Body, Layout.NoteWidth - Layout.NoteBodyRoom, Layout.SmallSize, SystemFont),
     Duration = tonumber(duration) or State.NoteDuration,
     Kind = kind and string.lower(tostring(kind)) or nil,
     Elapsed = 0,
@@ -5747,36 +5759,59 @@ do
   local HotkeyPlain = { enabled = true, enable = true, active = true, on = true }
 
 
-  local function CollectHotkeys(view, list)
+  local function CollectHotkeys(view)
     for _, Section in ipairs(view.Sections) do
       for _, Row in ipairs(Section.Rows) do
         local Bind = Row.Bind
 
         if Bind then
           local Bound = Bind.Value ~= "" and Bind.Value ~= "none" and Row.Value == true
-          local Plain = HotkeyPlain[string.lower(Row.Name)] and Section.Name ~= ""
+          -- Name/label strings are static per row, so each row owns one reused
+          -- entry: only its fade animates per frame, the strings rebuild only
+          -- when the bound value changes. The overlay pass allocates nothing
+          -- after warmup.
+          local entry = Row.OverlayEntry
+          if not entry then
+            entry = {}
+            Row.OverlayEntry = entry
+            entry.Plain = HotkeyPlain[string.lower(Row.Name)] and true or false
+            entry.Value = nil
+          end
+          if entry.Value ~= Bind.Value then
+            entry.Value = Bind.Value
+            entry.Key = KeyName.Label(Bind.Value)
+          end
+          entry.Name = (entry.Plain and Section.Name ~= "") and Section.Name or Row.Name
 
           Row.Overlay = Approach(Row.Overlay or 0, Bound and 1 or 0, Layout.HotkeySpeed)
+          entry.Fade = Row.Overlay
 
-          if Row.Overlay > Layout.HotkeyGone then list[#list + 1] = { Name = Plain and Section.Name or Row.Name, Key = KeyName.Label(Bind.Value), Fade = Row.Overlay } end
+          if Row.Overlay > Layout.HotkeyGone then
+            local Count = State.HotkeyCount + 1
+            State.HotkeyCount = Count
+            State.HotkeyList[Count] = entry
+          end
         end
       end
     end
 
-    for _, Sub in ipairs(view.Subs) do CollectHotkeys(Sub, list) end
+    for _, Sub in ipairs(view.Subs) do CollectHotkeys(Sub) end
   end
 
 
   function DrawHotkeyOverlay()
     if not Window or State.HotkeyShown == false then return end
+    if not State.HotkeyList then State.HotkeyList = {} end
 
-    local List = {}
-
-    for _, Tab in ipairs(State.Tabs) do CollectHotkeys(Tab, List) end
+    -- Fades animate every frame, but collection writes into the reused array
+    -- above instead of a fresh list of fresh tables.
+    State.HotkeyCount = 0
+    for _, Tab in ipairs(State.Tabs) do CollectHotkeys(Tab) end
+    local List, Count = State.HotkeyList, State.HotkeyCount
 
     local Span = 0
 
-    for Index = 1, #List do Span = Span + List[Index].Fade end
+    for Index = 1, Count do Span = Span + List[Index].Fade end
 
     State.HotkeyFade = Approach(State.HotkeyFade or 0, 1, Layout.HotkeyFadeSpeed)
 
@@ -5786,7 +5821,7 @@ do
     local Width = Layout.HotkeyWidth
     local Height = Layout.HotkeyBase + Span * Layout.HotkeyRow + Layout.HotkeyPad
     local Pos = State.HotkeyPos or { X = Layout.HotkeyX, Y = Layout.HotkeyY }
-    local Viewport = Camera.ViewportSize
+    local Viewport = State.View or Camera.ViewportSize
 
     State.HotkeyPos = Pos
 
@@ -5809,7 +5844,7 @@ do
     DrawText("keybinds", X + Layout.HotkeyTitleX, Y + Layout.HotkeyTitleY, Theme.Text, Layout.SmallSize, BoldFont, 152, Alpha.Text * Fade, Width - Layout.HotkeyTitleRoom)
     GradientRect(X + Layout.HotkeyRuleX, Y + Layout.HotkeyRuleY, Width - Layout.HotkeyRuleRoom, Layout.HotkeyRuleHeight, Theme.AccentA, Theme.AccentB, 152, Alpha.HotkeyRule * Fade)
 
-    for Index = 1, #List do
+    for Index = 1, Count do
       local Item = List[Index]
       local Shade = Item.Fade * Fade
       local Slide = (1 - Item.Fade) * Layout.HotkeySlide
@@ -5865,7 +5900,7 @@ do
 
     local Pos = State.BubblePos or { X = Layout.BubbleX, Y = Layout.BubbleY }
     local Drag = State.BubbleDrag
-    local Viewport = Camera.ViewportSize
+    local Viewport = State.View or Camera.ViewportSize
 
     State.BubblePos = Pos
 
@@ -7053,6 +7088,9 @@ task.spawn(function()
     State.Delta = math.min(Now - State.LastFrame, 0.05)
     State.LastFrame = Now
     State.Frame = State.Frame + 1
+    -- One viewport read per frame: the draw passes below used to re-read this
+    -- host property several times each.
+    State.View = Camera.ViewportSize
 
     ResetFrame()
     ReadInput()
@@ -7072,7 +7110,13 @@ task.spawn(function()
       Keys.Space.Click = false
     end
 
-    local MenuKey = Keys[Keys.Resolve(State.MenuKey)]
+    -- The menu key changes only in settings: resolving it (string ops) every
+    -- frame was pure garbage, so the resolved ref is memoized on change.
+    if State.MenuKeyName ~= State.MenuKey then
+      State.MenuKeyName = State.MenuKey
+      State.MenuKeyRef = Keys[Keys.Resolve(State.MenuKey)]
+    end
+    local MenuKey = State.MenuKeyRef
 
     if MenuKey and MenuKey.Click and not State.Focus and not State.Capture then State.Open = not State.Open end
 
